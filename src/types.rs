@@ -1,25 +1,21 @@
 type TxId = u64;
 type UserId = u64;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TxType {
-    #[default]
-    Unknown,
     Deposit,
     Transfer,
     Withdrawal,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TxStatus {
-    #[default]
-    Unknown,
     Success,
     Failure,
     Pending,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Transaction {
     pub id: TxId,
     pub r#type: TxType,

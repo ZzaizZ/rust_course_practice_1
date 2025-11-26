@@ -1,9 +1,9 @@
-use crate::error::{DumpError, ParseError};
+use crate::error::{self, DumpError, ParseError};
 use crate::types::{Transaction, TxStatus, TxType};
 use core::fmt;
+use std::collections::HashMap;
 use std::{
-    collections::HashSet,
-    io::{self, BufRead, Write},
+    io::{self, BufRead},
     str::FromStr,
 };
 
@@ -11,7 +11,7 @@ trait Validator {
     fn is_valid(&self) -> bool;
 }
 
-static REQUIRED_FIELDS: &'static [&'static str] = &[
+static REQUIRED_FIELDS: &[&str] = &[
     "TX_ID",
     "TX_TYPE",
     "FROM_USER_ID",
@@ -22,48 +22,85 @@ static REQUIRED_FIELDS: &'static [&'static str] = &[
     "DESCRIPTION",
 ];
 
-struct TransactionWrapper {
-    tx: Transaction,
-    parsed_fields: HashSet<String>,
+struct TxWrapper {
+    parsed_fields: HashMap<String, String>,
 }
 
-impl TransactionWrapper {
+impl TxWrapper {
     fn new() -> Self {
-        let mut fields = HashSet::new();
-        fields.reserve(REQUIRED_FIELDS.len());
-        TransactionWrapper {
-            tx: Transaction::default(),
+        Self {
+            parsed_fields: HashMap::with_capacity(8),
+        }
+    }
+
+    fn from_tx(tx: &Transaction) -> Self {
+        let mut fields = HashMap::<String, String>::with_capacity(8);
+        fields.insert("TX_ID".to_string(), tx.id.to_string());
+        fields.insert("TX_TYPE".to_string(), tx.r#type.to_string());
+        fields.insert("FROM_USER_ID".to_string(), tx.from_user.to_string());
+        fields.insert("TO_USER_ID".to_string(), tx.to_user.to_string());
+        fields.insert("AMOUNT".to_string(), tx.amount.to_string());
+        fields.insert("TIMESTAMP".to_string(), tx.timestamp.to_string());
+        fields.insert("STATUS".to_string(), tx.status.to_string());
+        fields.insert("DESCRIPTION".to_string(), tx.description.clone());
+
+        TxWrapper {
             parsed_fields: fields,
         }
     }
 
-    fn release(&mut self) -> Transaction {
-        std::mem::take(&mut self.tx)
+    fn apply_field(&mut self, name: &str, value: &str) {
+        self.parsed_fields
+            .insert(name.to_string(), value.to_string());
     }
 
-    fn apply_field(&mut self, name: &str, value: &str) -> Result<(), ParseError> {
-        match name {
-            "TX_ID" => self.tx.id = value.parse()?,
-            "FROM_USER_ID" => self.tx.from_user = value.parse()?,
-            "TX_TYPE" => self.tx.r#type = value.parse()?,
-            "TO_USER_ID" => self.tx.to_user = value.parse()?,
-            "AMOUNT" => self.tx.amount = value.parse()?,
-            "TIMESTAMP" => self.tx.timestamp = value.parse()?,
-            "STATUS" => self.tx.status = value.parse()?,
-            "DESCRIPTION" => self.tx.description = value.trim_matches('"').to_string(),
-            _ => return Err(ParseError::InvalidFormat),
-        }
-        
-        self.parsed_fields.insert(name.to_string());
-        Ok(())
+    fn build(&self) -> Result<Transaction, ParseError> {
+        let id: u64 = self.parsed_fields["TX_ID"].parse()?;
+        let r#type: TxType = self.parsed_fields["TX_TYPE"].parse()?;
+        let from_user: u64 = self.parsed_fields["FROM_USER_ID"].parse()?;
+        let to_user: u64 = self.parsed_fields["TO_USER_ID"].parse()?;
+        let amount: u64 = self.parsed_fields["AMOUNT"].parse()?;
+        let timestamp: u64 = self.parsed_fields["TIMESTAMP"].parse()?;
+        let status: TxStatus = self.parsed_fields["STATUS"].parse()?;
+        let description = strip_quotes(self.parsed_fields["DESCRIPTION"].clone());
+
+        Ok(Transaction {
+            id,
+            r#type,
+            from_user,
+            to_user,
+            amount,
+            timestamp,
+            status,
+            description,
+        })
     }
 }
 
-impl Validator for TransactionWrapper {
+fn strip_quotes(mut s: String) -> String {
+    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+        s.remove(0);
+        s.pop();
+    }
+    s
+}
+
+fn dump_txw_as_text(txw: &TxWrapper, writer: &mut impl io::Write) -> Result<(), error::DumpError> {
+    for (k, v) in txw.parsed_fields.iter() {
+        if k == "DESCRIPTION" {
+            writeln!(writer, "{}: \"{}\"", k, v)?;
+        } else {
+            writeln!(writer, "{}: {}", k, v)?;
+        }
+    }
+    Ok(())
+}
+
+impl Validator for TxWrapper {
     fn is_valid(&self) -> bool {
         REQUIRED_FIELDS
             .iter()
-            .all(|required_field| self.parsed_fields.contains(*required_field))
+            .all(|required_field| self.parsed_fields.contains_key(*required_field))
     }
 }
 
@@ -97,26 +134,26 @@ fn parse_lines<I: Iterator<Item = io::Result<String>>>(
     lines: I,
 ) -> Result<Vec<Transaction>, ParseError> {
     let mut result: Vec<Transaction> = Vec::new();
-    let mut current_tx: TransactionWrapper = TransactionWrapper::new();
+    let mut current_tx = TxWrapper::new();
     for line in lines {
         let l = line?.trim().to_string();
         if l.is_empty() {
             if !current_tx.is_valid() {
-                current_tx = TransactionWrapper::new();
+                current_tx = TxWrapper::new();
                 continue;
             }
-            result.push(current_tx.release());
+            result.push(current_tx.build()?);
             continue;
         }
         let parts: Vec<&str> = l.split(':').map(|s| s.trim()).collect();
         if parts.len() != 2 {
             return Err(ParseError::InvalidFormat);
         }
-        current_tx.apply_field(parts[0], parts[1])?;
+        current_tx.apply_field(parts[0], parts[1]);
     }
 
     if current_tx.is_valid() {
-        result.push(current_tx.release());
+        result.push(current_tx.build()?);
     }
     Ok(result)
 }
@@ -132,7 +169,6 @@ impl fmt::Display for TxType {
             Self::Deposit => write!(f, "DEPOSIT"),
             Self::Transfer => write!(f, "TRANSFER"),
             Self::Withdrawal => write!(f, "WITHDRAWAL"),
-            Self::Unknown => write!(f, "UNKNOWN"), //FXIME: надо дропнуть
         }
     }
 }
@@ -143,41 +179,22 @@ impl fmt::Display for TxStatus {
             Self::Success => write!(f, "SUCCESS"),
             Self::Failure => write!(f, "FAILURE"),
             Self::Pending => write!(f, "PENDING"),
-            Self::Unknown => write!(f, "UNKNOWN"), //FIXME: надо дропнуть
         }
     }
 }
 
-impl fmt::Display for Transaction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "TX_ID: {}\nTX_TYPE: {}\nFROM_USER_ID: {}\nTO_USER_ID: {}\nAMOUNT: {}\nTIMESTAMP: {}\nSTATUS: {}\nDESCRIPTION: \"{}\"",
-            self.id,
-            self.r#type,
-            self.from_user,
-            self.to_user,
-            self.amount,
-            self.timestamp,
-            self.status,
-            self.description
-        )
-    }
-}
-
-pub fn dump_as_text<W: io::Write>(
-    writer: &mut W,
-    transactions: &Vec<Transaction>,
+pub fn dump_as_text(
+    writer: &mut impl io::Write,
+    transactions: &[Transaction],
 ) -> Result<(), DumpError> {
-    let mut w = io::BufWriter::new(writer);
     for tx in transactions {
-        if let Err(_) = write!(w, "{}\n", tx) {
-            return Err(DumpError::InternalError);
-        }
+        let txw = TxWrapper::from_tx(tx);
+        dump_txw_as_text(&txw, writer)?;
     }
     Ok(())
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -194,7 +211,7 @@ mod tests {
 
         let expected = Transaction {
             id: 123,
-            r#type: TxType::Deposit,
+            r#type: crate::types::TxType::Deposit,
             from_user: 0,
             to_user: 9876543210987654,
             amount: 10000,
@@ -205,11 +222,11 @@ mod tests {
 
         let got = parse_from_text(input.as_bytes());
 
-        assert!(matches!(got.as_ref().err(), None));
+        assert!(got.as_ref().err().is_none());
 
         let txs = got.as_ref().unwrap();
         assert_eq!(txs.len(), 1);
-        
+
         assert_eq!(expected, txs[0]);
     }
 
@@ -227,14 +244,28 @@ mod tests {
         }];
 
         let mut got = Vec::new();
-        
+
         let res = dump_as_text(&mut got, &input);
 
-        assert!(matches!(res.as_ref().err(), None));
+        assert!(res.as_ref().err().is_none());
 
-        let expected = "TX_ID: 123\nTX_TYPE: DEPOSIT\nFROM_USER_ID: 0\nTO_USER_ID: 9876543210987654\nAMOUNT: 10000\nTIMESTAMP: 1633036800000\nSTATUS: SUCCESS\nDESCRIPTION: \"Terminal deposit\"\n";
+        validate(&String::from_utf8_lossy(&got));
+    }
 
-        assert_eq!(expected, String::from_utf8_lossy(&got));
+    fn validate(got: &str) {
+        let expected = vec![
+            "TX_ID: 123",
+            "TX_TYPE: DEPOSIT",
+            "FROM_USER_ID: 0",
+            "TO_USER_ID: 9876543210987654",
+            "AMOUNT: 10000",
+            "TIMESTAMP: 1633036800000",
+            "STATUS: SUCCESS",
+            "DESCRIPTION: \"Terminal deposit\"",
+        ];
 
+        for ex in expected {
+            assert!(got.contains(ex));
+        }
     }
 }

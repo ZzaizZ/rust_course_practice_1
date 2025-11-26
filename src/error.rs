@@ -22,4 +22,11 @@ impl From<ParseIntError> for ParseError {
 #[derive(Debug)]
 pub enum DumpError {
     InternalError,
+    OutputError,
+}
+
+impl From<std::io::Error> for DumpError {
+    fn from(_: std::io::Error) -> Self {
+        DumpError::OutputError
+    }
 }
