@@ -2,6 +2,7 @@ use std::io::{self, BufRead};
 
 use crate::error;
 use crate::types::{Transaction, TxStatus, TxType};
+use crate::utils::wrap_with_quotes;
 
 const EXPECTED_HEADER: &[&str] = &[
     "TX_ID",
@@ -14,11 +15,42 @@ const EXPECTED_HEADER: &[&str] = &[
     "DESCRIPTION",
 ];
 
+/// Читает и парсит транзакции из формата CSV.
+///
+/// # Аргументы
+///
+/// * `reader` - Источник данных. Это может быть открытый файл, сетевой поток или
+///   массив байт. Должен реализовывать трейт [`std::io::Read`].  
+///   Данные должны быть в текстовом формате ([doc/YPBankTextFormat_ru.md](doc/YPBankCsvFormat_ru.md))
+///
+/// # Ошибки
+///
+/// Возвращает [`ParseError`], если:
+/// * Формат данных некорректен.
+/// * Возникла ошибка ввода-вывода при чтении из `reader`.
+///
+/// # Пример
+///
+/// Чтение из строки (используя `as_bytes()`):
+///
+/// ```rust
+/// use ypbank_parser::{parse_from_csv, types::Transaction};
+///
+/// let data = r##"TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,AMOUNT,TIMESTAMP,STATUS,DESCRIPTION
+///                1001,DEPOSIT,0,501,50000,1672531200000,SUCCESS,"Initial account funding""##;
+/// let mut reader = data.as_bytes();
+///
+/// let txs = parse_from_csv(&mut reader).expect("Ошибка парсинга");
+/// assert_eq!(txs.len(), 1);
+/// assert_eq!(txs[0].description, "Initial account funding");
+/// ```
 pub fn parse_from_csv(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
     let mut lines = io::BufReader::new(reader).lines();
     let header_types = parse_header(&mut lines)?;
     if !header_is_valid(&header_types) {
-        return Err(error::ParseError::InvalidFormat);
+        return Err(error::ParseError::InvalidFormat(
+            "invalid header".to_string(),
+        ));
     }
     parse_transactions(&mut lines)
 }
@@ -33,7 +65,9 @@ fn parse_header<I: Iterator<Item = io::Result<String>>>(
         }
         return Ok(l.split_terminator(',').map(|s| s.to_string()).collect());
     }
-    Err(error::ParseError::InvalidFormat)
+    Err(error::ParseError::InvalidFormat(
+        "invalid header".to_string(),
+    ))
 }
 
 fn header_is_valid(header: &Vec<String>) -> bool {
@@ -56,8 +90,11 @@ fn parse_transactions<I: Iterator<Item = io::Result<String>>>(
 
 fn parse_transaction(tx: &str) -> Result<Transaction, error::ParseError> {
     let values: Vec<&str> = tx.split(',').collect();
-    if values.len() != EXPECTED_HEADER.len() {
-        return Err(error::ParseError::InvalidFormat);
+    if values.len() < EXPECTED_HEADER.len() {
+        return Err(error::ParseError::InvalidFormat(format!(
+            "invalid fields count: {}",
+            values.len()
+        )));
     }
 
     let id = values[0].parse::<u64>()?;
@@ -67,7 +104,7 @@ fn parse_transaction(tx: &str) -> Result<Transaction, error::ParseError> {
     let amount = values[4].parse::<u64>()?;
     let timestamp = values[5].parse::<u64>()?;
     let status = values[6].parse::<TxStatus>()?;
-    let description = values[7].to_string();
+    let description = crate::utils::strip_quotes(values[7..].join(","));
 
     Ok(Transaction {
         id,
@@ -81,6 +118,38 @@ fn parse_transaction(tx: &str) -> Result<Transaction, error::ParseError> {
     })
 }
 
+/// Сериализует список транзакций в формат CSV, записывая результат в `writer`.
+///
+/// # Аргументы
+///
+/// * `writer` - Приемник данных. Это может быть файл, сокет или буфер в памяти (`Vec<u8>`).
+///   Должен реализовывать трейт [`std::io::Write`].
+/// * `transactions` - Слайс транзакций для записи.
+///
+/// # Ошибки
+///
+/// Возвращает [`DumpError`], если:
+/// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
+///
+/// # Пример
+///
+/// Запись в буфер в памяти:
+///
+/// ```rust
+/// use ypbank_parser::{dump_as_csv, types::{Transaction, TxStatus, TxType}, };
+///
+/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
+///                            from_user: 1001, to_user: 1001,
+///                            amount: 1001, timestamp: 1633036800000,
+///                            status: TxStatus::Success,
+///                            description: "Description".to_string()}];
+/// let mut buffer = Vec::new();
+///
+/// dump_as_csv(&mut buffer, &txs).expect("Ошибка записи");
+///
+/// let result_string = String::from_utf8(buffer).expect("Невалидный UTF-8");
+/// assert!(result_string.contains("1,DEPOSIT,1001,1001,1001,1633036800000,SUCCESS,\"Description\""));
+/// ```
 pub fn dump_as_csv(
     writer: &mut impl io::Write,
     transactions: &[Transaction],
@@ -107,7 +176,7 @@ fn write_tx(writer: &mut impl io::Write, tx: &Transaction) -> Result<(), error::
         tx.amount.to_string(),
         tx.timestamp.to_string(),
         tx.status.to_string(),
-        tx.description.clone(),
+        wrap_with_quotes(&tx.description),
     ];
     writeln!(writer, "{}", values.join(","))?;
     Ok(())

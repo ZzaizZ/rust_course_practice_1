@@ -1,5 +1,6 @@
 use crate::error::{self, DumpError, ParseError};
 use crate::types::{Transaction, TxStatus, TxType};
+use crate::utils;
 use core::fmt;
 use std::collections::HashMap;
 use std::{
@@ -88,7 +89,7 @@ fn strip_quotes(mut s: String) -> String {
 fn dump_txw_as_text(txw: &TxWrapper, writer: &mut impl io::Write) -> Result<(), error::DumpError> {
     for (k, v) in txw.parsed_fields.iter() {
         if k == "DESCRIPTION" {
-            writeln!(writer, "{}: \"{}\"", k, v)?;
+            writeln!(writer, "{}: {}", k, utils::wrap_with_quotes(v))?;
         } else {
             writeln!(writer, "{}: {}", k, v)?;
         }
@@ -112,7 +113,7 @@ impl FromStr for TxType {
             "DEPOSIT" => Ok(TxType::Deposit),
             "TRANSFER" => Ok(TxType::Transfer),
             "WITHDRAWAL" => Ok(TxType::Withdrawal),
-            _ => Err(ParseError::InvalidFormat),
+            _ => Err(ParseError::InvalidFormat("unknown tx type".to_string())),
         }
     }
 }
@@ -125,7 +126,7 @@ impl FromStr for TxStatus {
             "SUCCESS" => Ok(TxStatus::Success),
             "FAILURE" => Ok(TxStatus::Failure),
             "PENDING" => Ok(TxStatus::Pending),
-            _ => Err(ParseError::InvalidFormat),
+            _ => Err(ParseError::InvalidFormat("unknown tx status".to_string())),
         }
     }
 }
@@ -147,7 +148,9 @@ fn parse_lines<I: Iterator<Item = io::Result<String>>>(
         }
         let parts: Vec<&str> = l.split(':').map(|s| s.trim()).collect();
         if parts.len() != 2 {
-            return Err(ParseError::InvalidFormat);
+            return Err(ParseError::InvalidFormat(
+                "invalid field format".to_string(),
+            ));
         }
         current_tx.apply_field(parts[0], parts[1]);
     }
@@ -158,7 +161,51 @@ fn parse_lines<I: Iterator<Item = io::Result<String>>>(
     Ok(result)
 }
 
-pub fn parse_from_text<R: io::Read>(reader: R) -> Result<Vec<Transaction>, ParseError> {
+/// Читает и парсит транзакции из текстового формата.
+///
+/// # Аргументы
+///
+/// * `reader` - Источник данных. Это может быть открытый файл, сетевой поток или
+///   массив байт. Должен реализовывать трейт [`std::io::Read`].  
+///   Данные должны быть в текстовом формате ([doc/YPBankTextFormat_ru.md](doc/YPBankTextFormat_ru.md))
+///
+/// # Ошибки
+///
+/// Возвращает [`ParseError`], если:
+/// * Формат данных некорректен.
+/// * Возникла ошибка ввода-вывода при чтении из `reader`.
+///
+/// # Пример
+///
+/// Чтение из строки (используя `as_bytes()`):
+///
+/// ```rust
+/// use ypbank_parser::{parse_from_text, types::Transaction};
+///
+/// let data = r##"TX_ID: 123
+///                TX_TYPE: DEPOSIT
+///                FROM_USER_ID: 0
+///                TO_USER_ID: 9876543210987654
+///                AMOUNT: 10000
+///                TIMESTAMP: 1633036800000
+///                STATUS: SUCCESS
+///                DESCRIPTION: "Terminal deposit""##;
+/// let mut reader = data.as_bytes();
+///
+/// let txs = parse_from_text(&mut reader).expect("Ошибка парсинга");
+/// assert_eq!(txs.len(), 1);
+/// ```
+///
+/// Чтение из файла:
+///
+/// ```no_run
+/// use std::fs::File;
+/// use ypbank_parser::parse_from_text;
+///
+/// let mut file = File::open("history.txt").expect("Файл не найден");
+/// let txs = parse_from_text(&mut file).expect("Ошибка парсинга");
+/// ```
+pub fn parse_from_text(reader: &mut impl io::Read) -> Result<Vec<Transaction>, ParseError> {
     let lines = io::BufReader::new(reader).lines();
     parse_lines(lines)
 }
@@ -183,13 +230,49 @@ impl fmt::Display for TxStatus {
     }
 }
 
+/// Сериализует список транзакций в текстовый формат, записывая результат в `writer`.
+///
+/// # Аргументы
+///
+/// * `writer` - Приемник данных. Это может быть файл, сокет или буфер в памяти (`Vec<u8>`).
+///   Должен реализовывать трейт [`std::io::Write`].
+/// * `transactions` - Слайс транзакций для записи.
+///
+/// # Ошибки
+///
+/// Возвращает [`DumpError`], если:
+/// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
+///
+/// # Пример
+///
+/// Запись в буфер в памяти:
+///
+/// ```rust
+/// use ypbank_parser::{dump_as_text, types::{Transaction, TxStatus, TxType}, };
+///
+/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
+///                            from_user: 1001, to_user: 1001,
+///                            amount: 1001, timestamp: 1633036800000,
+///                            status: TxStatus::Success,
+///                            description: "Description".to_string()}];
+/// let mut buffer = Vec::new();
+///
+/// dump_as_text(&mut buffer, &txs).expect("Ошибка записи");
+///
+/// let result_string = String::from_utf8(buffer).expect("Невалидный UTF-8");
+/// assert!(result_string.contains("STATUS: SUCCESS"));
+/// ```
 pub fn dump_as_text(
     writer: &mut impl io::Write,
     transactions: &[Transaction],
 ) -> Result<(), DumpError> {
-    for tx in transactions {
+    let mut iter = transactions.iter().peekable();
+    while let Some(tx) = iter.next() {
         let txw = TxWrapper::from_tx(tx);
         dump_txw_as_text(&txw, writer)?;
+        if iter.peek().is_some() {
+            writeln!(writer)?;
+        }
     }
     Ok(())
 }
@@ -220,7 +303,7 @@ mod tests {
             description: "Terminal deposit".to_string(),
         };
 
-        let got = parse_from_text(input.as_bytes());
+        let got = parse_from_text(&mut input.as_bytes());
 
         assert!(got.as_ref().err().is_none());
 

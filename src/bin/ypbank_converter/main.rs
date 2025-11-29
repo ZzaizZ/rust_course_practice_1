@@ -52,8 +52,7 @@ impl From<error::ParseError> for Error {
     fn from(value: error::ParseError) -> Self {
         match value {
             error::ParseError::IOError(str) => Error::Parse(str),
-            error::ParseError::InvalidFormat => Error::Parse("invalid format".to_string()),
-            error::ParseError::UnknownError(str) => Error::Parse(str),
+            error::ParseError::InvalidFormat(err) => Error::Parse(err.to_string()),
         }
     }
 }

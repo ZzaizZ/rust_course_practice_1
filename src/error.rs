@@ -3,8 +3,7 @@ use std::num::ParseIntError;
 #[derive(Debug)]
 pub enum ParseError {
     IOError(String),
-    InvalidFormat,
-    UnknownError(String),
+    InvalidFormat(String),
 }
 
 impl From<std::io::Error> for ParseError {
@@ -14,8 +13,8 @@ impl From<std::io::Error> for ParseError {
 }
 
 impl From<ParseIntError> for ParseError {
-    fn from(_: ParseIntError) -> Self {
-        ParseError::InvalidFormat
+    fn from(err: ParseIntError) -> Self {
+        ParseError::InvalidFormat(err.to_string())
     }
 }
 

@@ -35,8 +35,7 @@ impl From<error::ParseError> for Error {
     fn from(value: error::ParseError) -> Self {
         match value {
             error::ParseError::IOError(str) => Error::Parse(str),
-            error::ParseError::InvalidFormat => Error::Parse("invalid format".to_string()),
-            error::ParseError::UnknownError(str) => Error::Parse(str),
+            error::ParseError::InvalidFormat(err) => Error::Parse(err.to_string()),
         }
     }
 }
@@ -96,7 +95,9 @@ struct Args {
 }
 
 // Сравнивает набор транзакций.
-// Возвращает None, если наборы идентичны или (index, Option<&'a Transaction>, Option<&'a Transaction>), первой несовпавшей пары транзакций
+// Возвращает либо:
+// - None, если наборы идентичны
+// - (index, Option<&'a Transaction>, Option<&'a Transaction>), первой несовпавшей пары транзакций
 fn compare<'a>(
     lhs: &'a [Transaction],
     rhs: &'a [Transaction],
@@ -162,9 +163,12 @@ fn main() {
     };
 
     let result = compare(&tx1_unwraped, &tx2_unwraped);
-    if let Some(r) = result {
+    if let Some(r) = &result {
         println!("Наборы транзакций не иднетичны!");
-        println!("Несовпали транзакции на позииции {}", r.0);
-        println!("LHS:\n{:#?}\n\nRHS:{:#?}", r.1, r.2);
+        println!("Несовпали транзакции на позииции {}", r.0 + 1);
+
+        println!("LHS:\n{:#?}\n\nRHS:\n{:#?}", r.1, r.2);
+    } else {
+        println!("Наборы транзакций идентичны!")
     }
 }
