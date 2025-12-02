@@ -36,7 +36,7 @@ fn read_string(size: usize, reader: &mut impl io::Read) -> io::Result<String> {
 }
 
 fn read_tx_type(reader: &mut impl io::Read) -> io::Result<TxType> {
-    let mut buf = vec![0u8; 1];
+    let mut buf = [0u8; 1];
     reader.read_exact(&mut buf)?;
     match buf[0] {
         0 => Ok(TxType::Deposit),
@@ -47,7 +47,7 @@ fn read_tx_type(reader: &mut impl io::Read) -> io::Result<TxType> {
 }
 
 fn read_tx_status(reader: &mut impl io::Read) -> io::Result<TxStatus> {
-    let mut buf = vec![0u8; 1];
+    let mut buf = [0u8; 1];
     reader.read_exact(&mut buf)?;
     match buf[0] {
         0 => Ok(TxStatus::Success),
