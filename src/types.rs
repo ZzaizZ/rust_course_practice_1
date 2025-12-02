@@ -50,3 +50,14 @@ pub struct Transaction {
     /// Текстовое описание или назначение платежа.
     pub description: String,
 }
+
+/// Поддерживаемые форматы файлов для импорта/экспорта транзакций.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SupportedFileFormat {
+    /// Текстовый формат (см. [описание](doc/YPBankTextFormat_ru.md)).
+    Text,
+    /// CSV формат (см. [описание](doc/YPBankCsvFormat_ru.md)).
+    Csv,
+    /// Бинарный формат (см. [описание](doc/YPBankBinFormat_ru.md)).
+    Bin,
+}

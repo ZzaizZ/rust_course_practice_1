@@ -2,10 +2,7 @@ use std::{fmt, io};
 
 use clap::Parser;
 use std::fs;
-use ypbank_parser::{
-    dump_as_bin, dump_as_csv, dump_as_text, error, parse_from_bin, parse_from_csv, parse_from_text,
-    types,
-};
+use ypbank_parser::{error, types};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -28,6 +25,16 @@ enum KnownFileFormat {
     Bin,
     Csv,
     Text,
+}
+
+impl KnownFileFormat {
+    fn as_supported(&self) -> types::SupportedFileFormat {
+        match self {
+            KnownFileFormat::Bin => types::SupportedFileFormat::Bin,
+            KnownFileFormat::Csv => types::SupportedFileFormat::Csv,
+            KnownFileFormat::Text => types::SupportedFileFormat::Text,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -84,29 +91,6 @@ impl From<io::Error> for Error {
     }
 }
 
-fn parse_tx(
-    reader: &mut impl io::Read,
-    input_type: KnownFileFormat,
-) -> Result<Vec<types::Transaction>, Error> {
-    match input_type {
-        KnownFileFormat::Csv => Ok(parse_from_csv(reader)?),
-        KnownFileFormat::Text => Ok(parse_from_text(reader)?),
-        KnownFileFormat::Bin => Ok(parse_from_bin(reader)?),
-    }
-}
-
-fn dump_tx(
-    writer: &mut impl io::Write,
-    output_type: KnownFileFormat,
-    transactions: &[types::Transaction],
-) -> Result<(), Error> {
-    match output_type {
-        KnownFileFormat::Csv => Ok(dump_as_csv(writer, transactions)?),
-        KnownFileFormat::Text => Ok(dump_as_text(writer, transactions)?),
-        KnownFileFormat::Bin => Ok(dump_as_bin(writer, transactions)?),
-    }
-}
-
 fn run() -> Result<(), Error> {
     let args = Args::parse();
 
@@ -124,7 +108,7 @@ fn run() -> Result<(), Error> {
     let input_format = args.input_format;
     let output_format = args.output_format;
 
-    let transactions = parse_tx(&mut input_file, input_format);
+    let transactions = ypbank_parser::parse(&mut input_file, input_format.as_supported());
     let Ok(transactions) = transactions else {
         return Err(Error::Usage(format!(
             "ошибка при разборе транзакций исходного файла:\n{:?}",
@@ -132,7 +116,11 @@ fn run() -> Result<(), Error> {
         )));
     };
 
-    dump_tx(&mut output_file, output_format, &transactions)?;
+    ypbank_parser::dump(
+        &mut output_file,
+        output_format.as_supported(),
+        &transactions,
+    )?;
 
     Ok(())
 }

@@ -1,6 +1,6 @@
 use crate::error::{self, DumpError, ParseError};
 use crate::types::{Transaction, TxStatus, TxType};
-use crate::utils;
+use crate::{parser, utils};
 use core::fmt;
 use std::collections::HashMap;
 use std::{
@@ -178,38 +178,7 @@ fn parse_lines<I: Iterator<Item = io::Result<String>>>(
 /// Возвращает [`ParseError`], если:
 /// * Формат данных некорректен.
 /// * Возникла ошибка ввода-вывода при чтении из `reader`.
-///
-/// # Пример
-///
-/// Чтение из строки (используя `as_bytes()`):
-///
-/// ```rust
-/// use ypbank_parser::{parse_from_text, types::Transaction};
-///
-/// let data = r##"TX_ID: 123
-///                TX_TYPE: DEPOSIT
-///                FROM_USER_ID: 0
-///                TO_USER_ID: 9876543210987654
-///                AMOUNT: 10000
-///                TIMESTAMP: 1633036800000
-///                STATUS: SUCCESS
-///                DESCRIPTION: "Terminal deposit""##;
-/// let mut reader = data.as_bytes();
-///
-/// let txs = parse_from_text(&mut reader).expect("Ошибка парсинга");
-/// assert_eq!(txs.len(), 1);
-/// ```
-///
-/// Чтение из файла:
-///
-/// ```no_run
-/// use std::fs::File;
-/// use ypbank_parser::parse_from_text;
-///
-/// let mut file = File::open("history.txt").expect("Файл не найден");
-/// let txs = parse_from_text(&mut file).expect("Ошибка парсинга");
-/// ```
-pub fn parse_from_text(reader: &mut impl io::Read) -> Result<Vec<Transaction>, ParseError> {
+fn parse_from_text(reader: &mut impl io::Read) -> Result<Vec<Transaction>, ParseError> {
     let lines = io::BufReader::new(reader).lines();
     parse_lines(lines)
 }
@@ -246,27 +215,7 @@ impl fmt::Display for TxStatus {
 ///
 /// Возвращает [`DumpError`], если:
 /// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
-///
-/// # Пример
-///
-/// Запись в буфер в памяти:
-///
-/// ```rust
-/// use ypbank_parser::{dump_as_text, types::{Transaction, TxStatus, TxType}, };
-///
-/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
-///                            from_user: 1001, to_user: 1001,
-///                            amount: 1001, timestamp: 1633036800000,
-///                            status: TxStatus::Success,
-///                            description: "Description".to_string()}];
-/// let mut buffer = Vec::new();
-///
-/// dump_as_text(&mut buffer, &txs).expect("Ошибка записи");
-///
-/// let result_string = String::from_utf8(buffer).expect("Невалидный UTF-8");
-/// assert!(result_string.contains("STATUS: SUCCESS"));
-/// ```
-pub fn dump_as_text(
+fn dump_as_text(
     writer: &mut impl io::Write,
     transactions: &[Transaction],
 ) -> Result<(), DumpError> {
@@ -279,6 +228,21 @@ pub fn dump_as_text(
         }
     }
     Ok(())
+}
+
+pub(crate) struct TextParser;
+
+impl parser::Parser for TextParser {
+    fn parse(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+        parse_from_text(reader)
+    }
+
+    fn dump(
+        writer: &mut impl io::Write,
+        transactions: &[Transaction],
+    ) -> Result<(), error::DumpError> {
+        dump_as_text(writer, transactions)
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use clap::Parser;
 use core::fmt;
 use std::{fs, io};
 use ypbank_parser::{
-    error, parse_from_bin, parse_from_csv, parse_from_text,
+    error,
     types::{self, Transaction},
 };
 
@@ -11,6 +11,16 @@ enum KnownFileFormat {
     Bin,
     Csv,
     Text,
+}
+
+impl KnownFileFormat {
+    fn as_supported(&self) -> types::SupportedFileFormat {
+        match self {
+            KnownFileFormat::Bin => types::SupportedFileFormat::Bin,
+            KnownFileFormat::Csv => types::SupportedFileFormat::Csv,
+            KnownFileFormat::Text => types::SupportedFileFormat::Text,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -64,17 +74,6 @@ impl From<error::DumpError> for Error {
 impl From<io::Error> for Error {
     fn from(_: io::Error) -> Self {
         Error::IO
-    }
-}
-
-fn parse_tx(
-    reader: &mut impl io::Read,
-    input_type: KnownFileFormat,
-) -> Result<Vec<types::Transaction>, Error> {
-    match input_type {
-        KnownFileFormat::Csv => Ok(parse_from_csv(reader)?),
-        KnownFileFormat::Text => Ok(parse_from_text(reader)?),
-        KnownFileFormat::Bin => Ok(parse_from_bin(reader)?),
     }
 }
 
@@ -136,14 +135,14 @@ fn run() -> Result<(), Error> {
         )));
     };
 
-    let transactions1 = parse_tx(&mut f1, args.format1);
+    let transactions1 = ypbank_parser::parse(&mut f1, args.format1.as_supported());
     let Ok(tx1_unwraped) = transactions1 else {
         return Err(Error::Usage(format!(
             "ошибка при разборе транзакций файла 1:\n{:?}",
             transactions1.unwrap_err()
         )));
     };
-    let transactions2 = parse_tx(&mut f2, args.format2);
+    let transactions2 = ypbank_parser::parse(&mut f2, args.format2.as_supported());
     let Ok(tx2_unwraped) = transactions2 else {
         return Err(Error::Usage(format!(
             "ошибка при разборе транзакций файла 2:\n{:?}",

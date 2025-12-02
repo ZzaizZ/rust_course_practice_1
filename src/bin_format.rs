@@ -1,4 +1,4 @@
-use crate::error;
+use crate::{error, parser};
 use std::{
     io::{self, Cursor},
     mem,
@@ -146,31 +146,7 @@ const MIN_RECORD_SIZE: u32 = 46;
 /// Возвращает [`ParseError`], если:
 /// * Формат данных некорректен.
 /// * Возникла ошибка ввода-вывода при чтении из `reader`.
-///
-/// # Пример
-///
-/// Чтение из массива байт:
-///
-/// ```rust
-/// use ypbank_parser::{parse_from_bin, types::Transaction};
-///
-/// let mut data: &[u8] = &[
-///            0x59, 0x50, 0x42, 0x4e,
-///            0x00, 0x00, 0x00, 0x32,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00,
-///            0x00, 0x00, 0x00, 0x04,
-///            0x74, 0x65, 0x73, 0x74,
-///        ];
-///
-/// let txs = parse_from_bin(&mut data).expect("Ошибка парсинга");
-/// ```
-pub fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
     let mut result = Vec::<Transaction>::new();
     loop {
         match Header::read(reader) {
@@ -205,27 +181,7 @@ pub fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, er
 ///
 /// Возвращает [`DumpError`], если:
 /// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
-///
-/// # Пример
-///
-/// Запись в буфер в памяти:
-///
-/// ```rust
-/// use ypbank_parser::{dump_as_bin, types::{Transaction, TxStatus, TxType}, };
-///
-/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
-///                            from_user: 1001, to_user: 1001,
-///                            amount: 1001, timestamp: 1633036800000,
-///                            status: TxStatus::Success,
-///                            description: "Description".to_string()}];
-/// let mut buffer: Vec<u8> = Vec::new();
-///
-/// dump_as_bin(&mut buffer, &txs).expect("Ошибка записи");
-///
-/// let magic_number: &[u8] = &[0x59u8, 0x50u8, 0x42u8, 0x4eu8];
-/// assert!(buffer.starts_with(magic_number));
-/// ```
-pub fn dump_as_bin<W: io::Write>(
+fn dump_as_bin<W: io::Write>(
     writer: &mut W,
     transactions: &[Transaction],
 ) -> Result<(), error::DumpError> {
@@ -280,6 +236,21 @@ fn dump_tx(tx: &Transaction) -> Vec<u8> {
     res.extend_from_slice(tx.description.as_bytes());
 
     res
+}
+
+pub(crate) struct BinParser;
+
+impl parser::Parser for BinParser {
+    fn parse(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+        parse_from_bin(reader)
+    }
+
+    fn dump(
+        writer: &mut impl io::Write,
+        transactions: &[Transaction],
+    ) -> Result<(), error::DumpError> {
+        dump_as_bin(writer, transactions)
+    }
 }
 
 #[cfg(test)]

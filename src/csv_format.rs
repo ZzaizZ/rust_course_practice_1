@@ -1,7 +1,7 @@
 use std::io::{self, BufRead};
 
-use crate::error;
 use crate::types::{Transaction, TxStatus, TxType};
+use crate::{error, parser};
 
 const EXPECTED_HEADER: &[&str] = &[
     "TX_ID",
@@ -27,23 +27,7 @@ const EXPECTED_HEADER: &[&str] = &[
 /// Возвращает [`ParseError`], если:
 /// * Формат данных некорректен.
 /// * Возникла ошибка ввода-вывода при чтении из `reader`.
-///
-/// # Пример
-///
-/// Чтение из строки (используя `as_bytes()`):
-///
-/// ```rust
-/// use ypbank_parser::{parse_from_csv, types::Transaction};
-///
-/// let data = r##"TX_ID,TX_TYPE,FROM_USER_ID,TO_USER_ID,AMOUNT,TIMESTAMP,STATUS,DESCRIPTION
-///                1001,DEPOSIT,0,501,50000,1672531200000,SUCCESS,"Initial account funding""##;
-/// let mut reader = data.as_bytes();
-///
-/// let txs = parse_from_csv(&mut reader).expect("Ошибка парсинга");
-/// assert_eq!(txs.len(), 1);
-/// assert_eq!(txs[0].description, "Initial account funding");
-/// ```
-pub fn parse_from_csv(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+fn parse_from_csv(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
     let mut lines = io::BufReader::new(reader).lines();
     let header_types = parse_header(&mut lines)?;
     if !header_is_valid(&header_types) {
@@ -165,27 +149,7 @@ fn parse_transaction(tx: &str) -> Result<Transaction, error::ParseError> {
 ///
 /// Возвращает [`DumpError`], если:
 /// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
-///
-/// # Пример
-///
-/// Запись в буфер в памяти:
-///
-/// ```rust
-/// use ypbank_parser::{dump_as_csv, types::{Transaction, TxStatus, TxType}, };
-///
-/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
-///                            from_user: 1001, to_user: 1001,
-///                            amount: 1001, timestamp: 1633036800000,
-///                            status: TxStatus::Success,
-///                            description: "Description".to_string()}];
-/// let mut buffer = Vec::new();
-///
-/// dump_as_csv(&mut buffer, &txs).expect("Ошибка записи");
-///
-/// let result_string = String::from_utf8(buffer).expect("Невалидный UTF-8");
-/// assert!(result_string.contains("1,DEPOSIT,1001,1001,1001,1633036800000,SUCCESS,\"Description\""));
-/// ```
-pub fn dump_as_csv(
+fn dump_as_csv(
     writer: &mut impl io::Write,
     transactions: &[Transaction],
 ) -> Result<(), error::DumpError> {
@@ -226,6 +190,21 @@ fn make_escaped_string(input: &str) -> String {
         escaped.push(c);
     }
     escaped
+}
+
+pub(crate) struct CsvParser;
+
+impl parser::Parser for CsvParser {
+    fn parse(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+        parse_from_csv(reader)
+    }
+
+    fn dump(
+        writer: &mut impl io::Write,
+        transactions: &[Transaction],
+    ) -> Result<(), error::DumpError> {
+        dump_as_csv(writer, transactions)
+    }
 }
 
 #[cfg(test)]
