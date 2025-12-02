@@ -42,7 +42,7 @@ enum Error {
     Parse(String),
     Dump(String),
     Usage(String),
-    IO,
+    IO(String),
 }
 
 impl Error {
@@ -51,7 +51,7 @@ impl Error {
             Self::Parse(_) => 1,
             Self::Dump(_) => 2,
             Self::Usage(_) => 3,
-            Self::IO => 4,
+            Self::IO(_) => 4,
         }
     }
 }
@@ -62,7 +62,7 @@ impl fmt::Display for Error {
             Self::Parse(msg) | Self::Dump(msg) | Self::Usage(msg) => {
                 write!(f, "{}", msg)
             }
-            Self::IO => write!(f, "IO error"),
+            Self::IO(msg) => write!(f, "IO error: {}", msg),
         }
     }
 }
@@ -86,8 +86,8 @@ impl From<error::DumpError> for Error {
 }
 
 impl From<io::Error> for Error {
-    fn from(_: io::Error) -> Self {
-        Error::IO
+    fn from(err: io::Error) -> Self {
+        Error::IO(format!("ошибка ввода-вывода: {}", err))
     }
 }
 
