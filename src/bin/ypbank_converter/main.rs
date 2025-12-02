@@ -10,20 +10,21 @@ use ypbank_parser::{
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Args {
-    /// Input file path
+    /// Путь до исходного файла с транзакциями
     #[arg(long, required = true)]
     input_file: String,
 
-    /// Input file type: text/csv/bin
+    /// Формат исходного файла: text/csv/bin
     #[arg(long, required = true)]
-    input_format: String,
+    input_format: KnownFileFormat,
 
-    /// Output file type: text/csv/bin
+    /// Формат выходного файла: text/csv/bin
     #[arg(long, required = true)]
-    output_format: String,
+    output_format: KnownFileFormat,
 }
 
-enum Type {
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum KnownFileFormat {
     Bin,
     Csv,
     Text,
@@ -83,35 +84,26 @@ impl From<io::Error> for Error {
     }
 }
 
-fn parse_format(f: &str) -> Result<Type, Error> {
-    match f {
-        "text" => Ok(Type::Text),
-        "csv" => Ok(Type::Csv),
-        "bin" => Ok(Type::Bin),
-        _ => Err(Error::Usage("unknown format".to_string())),
-    }
-}
-
 fn parse_tx(
     reader: &mut impl io::Read,
-    input_type: Type,
+    input_type: KnownFileFormat,
 ) -> Result<Vec<types::Transaction>, Error> {
     match input_type {
-        Type::Csv => Ok(parse_from_csv(reader)?),
-        Type::Text => Ok(parse_from_text(reader)?),
-        Type::Bin => Ok(parse_from_bin(reader)?),
+        KnownFileFormat::Csv => Ok(parse_from_csv(reader)?),
+        KnownFileFormat::Text => Ok(parse_from_text(reader)?),
+        KnownFileFormat::Bin => Ok(parse_from_bin(reader)?),
     }
 }
 
 fn dump_tx(
     writer: &mut impl io::Write,
-    output_type: Type,
+    output_type: KnownFileFormat,
     transactions: &[types::Transaction],
 ) -> Result<(), Error> {
     match output_type {
-        Type::Csv => Ok(dump_as_csv(writer, transactions)?),
-        Type::Text => Ok(dump_as_text(writer, transactions)?),
-        Type::Bin => Ok(dump_as_bin(writer, transactions)?),
+        KnownFileFormat::Csv => Ok(dump_as_csv(writer, transactions)?),
+        KnownFileFormat::Text => Ok(dump_as_text(writer, transactions)?),
+        KnownFileFormat::Bin => Ok(dump_as_bin(writer, transactions)?),
     }
 }
 
@@ -129,21 +121,8 @@ fn run() -> Result<(), Error> {
 
     let mut output_file = io::stdout();
 
-    let input_format = parse_format(&args.input_format);
-    let Ok(input_format) = input_format else {
-        return Err(Error::Usage(format!(
-            "неизвестный формат исходного файла: {}",
-            &args.input_format
-        )));
-    };
-
-    let output_format = parse_format(&args.output_format);
-    let Ok(output_format) = output_format else {
-        return Err(Error::Usage(format!(
-            "неизвестный формат выходного файла: {}",
-            &args.output_format
-        )));
-    };
+    let input_format = args.input_format;
+    let output_format = args.output_format;
 
     let transactions = parse_tx(&mut input_file, input_format);
     let Ok(transactions) = transactions else {

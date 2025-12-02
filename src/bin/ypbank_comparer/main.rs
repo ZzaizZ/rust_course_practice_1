@@ -6,7 +6,8 @@ use ypbank_parser::{
     types::{self, Transaction},
 };
 
-enum Type {
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum KnownFileFormat {
     Bin,
     Csv,
     Text,
@@ -66,23 +67,14 @@ impl From<io::Error> for Error {
     }
 }
 
-fn parse_format(f: &str) -> Result<Type, Error> {
-    match f {
-        "text" => Ok(Type::Text),
-        "csv" => Ok(Type::Csv),
-        "bin" => Ok(Type::Bin),
-        _ => Err(Error::Usage("unknown format".to_string())),
-    }
-}
-
 fn parse_tx(
     reader: &mut impl io::Read,
-    input_type: Type,
+    input_type: KnownFileFormat,
 ) -> Result<Vec<types::Transaction>, Error> {
     match input_type {
-        Type::Csv => Ok(parse_from_csv(reader)?),
-        Type::Text => Ok(parse_from_text(reader)?),
-        Type::Bin => Ok(parse_from_bin(reader)?),
+        KnownFileFormat::Csv => Ok(parse_from_csv(reader)?),
+        KnownFileFormat::Text => Ok(parse_from_text(reader)?),
+        KnownFileFormat::Bin => Ok(parse_from_bin(reader)?),
     }
 }
 
@@ -94,7 +86,7 @@ struct Args {
 
     /// Input file type: text/csv/bin
     #[arg(long, required = true)]
-    format1: String,
+    format1: KnownFileFormat,
 
     /// Input file path
     #[arg(long, required = true)]
@@ -102,7 +94,7 @@ struct Args {
 
     /// Output file type: text/csv/bin
     #[arg(long, required = true)]
-    format2: String,
+    format2: KnownFileFormat,
 }
 
 // Сравнивает набор транзакций.
@@ -144,28 +136,14 @@ fn run() -> Result<(), Error> {
         )));
     };
 
-    let Ok(format1) = parse_format(&args.format1) else {
-        return Err(Error::Usage(format!(
-            "невалидный формат файла 1: {}",
-            &args.format1
-        )));
-    };
-
-    let Ok(format2) = parse_format(&args.format2) else {
-        return Err(Error::Usage(format!(
-            "невалидный формат файла 2: {}",
-            &args.format2
-        )));
-    };
-
-    let transactions1 = parse_tx(&mut f1, format1);
+    let transactions1 = parse_tx(&mut f1, args.format1);
     let Ok(tx1_unwraped) = transactions1 else {
         return Err(Error::Usage(format!(
             "ошибка при разборе транзакций файла 1:\n{:?}",
             transactions1.unwrap_err()
         )));
     };
-    let transactions2 = parse_tx(&mut f2, format2);
+    let transactions2 = parse_tx(&mut f2, args.format2);
     let Ok(tx2_unwraped) = transactions2 else {
         return Err(Error::Usage(format!(
             "ошибка при разборе транзакций файла 2:\n{:?}",
