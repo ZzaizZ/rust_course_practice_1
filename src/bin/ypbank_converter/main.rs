@@ -1,4 +1,4 @@
-use std::{fmt, io};
+use std::{fmt, io, path::PathBuf};
 
 use clap::Parser;
 use std::fs;
@@ -9,7 +9,7 @@ use ypbank_parser::{error, types};
 struct Args {
     /// Путь до исходного файла с транзакциями
     #[arg(long, required = true)]
-    input_file: String,
+    input_file: PathBuf,
 
     /// Формат исходного файла: text/csv/bin
     #[arg(long, required = true)]
@@ -97,8 +97,8 @@ fn run() -> Result<(), Error> {
     let input_file = fs::File::open(&args.input_file);
     let Ok(mut input_file) = input_file else {
         return Err(Error::Usage(format!(
-            "невозможно открыть файл {}\n:{}",
-            &args.input_file,
+            "невозможно открыть файл {}: {}",
+            args.input_file.display(),
             input_file.unwrap_err()
         )));
     };
@@ -111,7 +111,7 @@ fn run() -> Result<(), Error> {
     let transactions = ypbank_parser::parse(&mut input_file, input_format.as_supported());
     let Ok(transactions) = transactions else {
         return Err(Error::Usage(format!(
-            "ошибка при разборе транзакций исходного файла:\n{:?}",
+            "ошибка при разборе транзакций исходного файла: {:?}",
             transactions.unwrap_err()
         )));
     };

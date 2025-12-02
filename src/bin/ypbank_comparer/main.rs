@@ -1,6 +1,6 @@
 use clap::Parser;
 use core::fmt;
-use std::{fs, io};
+use std::{fs, io, path::PathBuf};
 use ypbank_parser::{
     error,
     types::{self, Transaction},
@@ -81,7 +81,7 @@ impl From<io::Error> for Error {
 struct Args {
     /// Input file path
     #[arg(long, required = true)]
-    file1: String,
+    file1: PathBuf,
 
     /// Input file type: text/csv/bin
     #[arg(long, required = true)]
@@ -89,7 +89,7 @@ struct Args {
 
     /// Input file path
     #[arg(long, required = true)]
-    file2: String,
+    file2: PathBuf,
 
     /// Output file type: text/csv/bin
     #[arg(long, required = true)]
@@ -120,8 +120,8 @@ fn run() -> Result<(), Error> {
     let file1 = fs::File::open(&args.file1);
     let Ok(mut f1) = file1 else {
         return Err(Error::Usage(format!(
-            "невозможно открыть файл {}\n:{}",
-            &args.file1,
+            "невозможно открыть файл {}: {}",
+            args.file1.display(),
             file1.unwrap_err()
         )));
     };
@@ -129,8 +129,8 @@ fn run() -> Result<(), Error> {
     let file2 = fs::File::open(&args.file2);
     let Ok(mut f2) = file2 else {
         return Err(Error::Usage(format!(
-            "невозможно открыть файл {}\n:{}",
-            &args.file2,
+            "невозможно открыть файл {}: {}",
+            args.file2.display(),
             file2.unwrap_err()
         )));
     };
@@ -138,14 +138,14 @@ fn run() -> Result<(), Error> {
     let transactions1 = ypbank_parser::parse(&mut f1, args.format1.as_supported());
     let Ok(tx1_unwraped) = transactions1 else {
         return Err(Error::Usage(format!(
-            "ошибка при разборе транзакций файла 1:\n{:?}",
+            "ошибка при разборе транзакций файла 1: {:?}",
             transactions1.unwrap_err()
         )));
     };
     let transactions2 = ypbank_parser::parse(&mut f2, args.format2.as_supported());
     let Ok(tx2_unwraped) = transactions2 else {
         return Err(Error::Usage(format!(
-            "ошибка при разборе транзакций файла 2:\n{:?}",
+            "ошибка при разборе транзакций файла 2: {:?}",
             transactions2.unwrap_err()
         )));
     };
