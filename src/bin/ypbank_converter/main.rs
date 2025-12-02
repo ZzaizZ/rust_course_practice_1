@@ -37,6 +37,17 @@ enum Error {
     IO,
 }
 
+impl Error {
+    fn code(&self) -> i32 {
+        match self {
+            Self::Parse(_) => 1,
+            Self::Dump(_) => 2,
+            Self::Usage(_) => 3,
+            Self::IO => 4,
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -77,7 +88,7 @@ fn parse_format(f: &str) -> Result<Type, Error> {
         "text" => Ok(Type::Text),
         "csv" => Ok(Type::Csv),
         "bin" => Ok(Type::Bin),
-        _ => Err(Error::Usage("invalid format".to_string())),
+        _ => Err(Error::Usage("unknown format".to_string())),
     }
 }
 
@@ -104,42 +115,55 @@ fn dump_tx(
     }
 }
 
-fn main() {
+fn run() -> Result<(), Error> {
     let args = Args::parse();
 
-    let input = fs::File::open(&args.input_file);
-    let Ok(mut input_file) = input else {
-        eprintln!(
-            "Не возможно открыть файл {}\n:{}",
+    let input_file = fs::File::open(&args.input_file);
+    let Ok(mut input_file) = input_file else {
+        return Err(Error::Usage(format!(
+            "невозможно открыть файл {}\n:{}",
             &args.input_file,
-            input.unwrap_err()
-        );
-        return;
+            input_file.unwrap_err()
+        )));
     };
 
     let mut output_file = io::stdout();
 
-    let Ok(input_format) = parse_format(&args.input_format) else {
-        eprintln!("Невалидный формат файла 1: {}", &args.input_format);
-        return;
+    let input_format = parse_format(&args.input_format);
+    let Ok(input_format) = input_format else {
+        return Err(Error::Usage(format!(
+            "неизвестный формат исходного файла: {}",
+            &args.input_format
+        )));
     };
 
-    let Ok(output_format) = parse_format(&args.output_format) else {
-        eprintln!("Невалидный формат файла 1: {}", &args.output_format);
-        return;
+    let output_format = parse_format(&args.output_format);
+    let Ok(output_format) = output_format else {
+        return Err(Error::Usage(format!(
+            "неизвестный формат выходного файла: {}",
+            &args.output_format
+        )));
     };
 
     let transactions = parse_tx(&mut input_file, input_format);
-    let Ok(txs) = transactions else {
-        eprintln!(
-            "Ошибка при разборе транзакций файла {}:\n{:?}",
-            &args.input_file,
+    let Ok(transactions) = transactions else {
+        return Err(Error::Usage(format!(
+            "ошибка при разборе транзакций исходного файла:\n{:?}",
             transactions.unwrap_err()
-        );
-        return;
+        )));
     };
 
-    if let Err(err) = dump_tx(&mut output_file, output_format, &txs) {
-        eprintln!("Ошибка при конвертации транзакций:\n{}", err);
+    dump_tx(&mut output_file, output_format, &transactions)?;
+
+    Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(e.code());
+        }
     }
 }

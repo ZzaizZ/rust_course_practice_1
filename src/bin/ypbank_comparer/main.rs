@@ -20,6 +20,17 @@ enum Error {
     IO,
 }
 
+impl Error {
+    fn code(&self) -> i32 {
+        match self {
+            Self::Parse(_) => 1,
+            Self::Dump(_) => 2,
+            Self::Usage(_) => 3,
+            Self::IO => 4,
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -60,7 +71,7 @@ fn parse_format(f: &str) -> Result<Type, Error> {
         "text" => Ok(Type::Text),
         "csv" => Ok(Type::Csv),
         "bin" => Ok(Type::Bin),
-        _ => Err(Error::Usage("invalid format".to_string())),
+        _ => Err(Error::Usage("unknown format".to_string())),
     }
 }
 
@@ -112,54 +123,54 @@ fn compare<'a>(
     None
 }
 
-fn main() {
+fn run() -> Result<(), Error> {
     let args = Args::parse();
 
     let file1 = fs::File::open(&args.file1);
     let Ok(mut f1) = file1 else {
-        eprintln!(
-            "Не возможно открыть файл {}\n:{}",
+        return Err(Error::Usage(format!(
+            "невозможно открыть файл {}\n:{}",
             &args.file1,
             file1.unwrap_err()
-        );
-        return;
+        )));
     };
 
     let file2 = fs::File::open(&args.file2);
     let Ok(mut f2) = file2 else {
-        eprintln!(
-            "Не возможно открыть файл {}\n:{}",
+        return Err(Error::Usage(format!(
+            "невозможно открыть файл {}\n:{}",
             &args.file2,
             file2.unwrap_err()
-        );
-        return;
+        )));
     };
 
     let Ok(format1) = parse_format(&args.format1) else {
-        eprintln!("Невалидный формат файла 1: {}", &args.format1,);
-        return;
+        return Err(Error::Usage(format!(
+            "невалидный формат файла 1: {}",
+            &args.format1
+        )));
     };
 
     let Ok(format2) = parse_format(&args.format2) else {
-        eprintln!("Невалидный формат файла 2: {}", &args.format2,);
-        return;
+        return Err(Error::Usage(format!(
+            "невалидный формат файла 2: {}",
+            &args.format2
+        )));
     };
 
     let transactions1 = parse_tx(&mut f1, format1);
     let Ok(tx1_unwraped) = transactions1 else {
-        eprintln!(
-            "Ошибка при разборе транзакций файла 1:\n{:?}",
+        return Err(Error::Usage(format!(
+            "ошибка при разборе транзакций файла 1:\n{:?}",
             transactions1.unwrap_err()
-        );
-        return;
+        )));
     };
     let transactions2 = parse_tx(&mut f2, format2);
     let Ok(tx2_unwraped) = transactions2 else {
-        eprintln!(
-            "Ошибка при разборе транзакций файла 2:\n{:?}",
+        return Err(Error::Usage(format!(
+            "ошибка при разборе транзакций файла 2:\n{:?}",
             transactions2.unwrap_err()
-        );
-        return;
+        )));
     };
 
     let result = compare(&tx1_unwraped, &tx2_unwraped);
@@ -170,5 +181,16 @@ fn main() {
         println!("LHS:\n{:#?}\n\nRHS:\n{:#?}", r.1, r.2);
     } else {
         println!("Наборы транзакций идентичны!")
+    }
+    Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(e.code());
+        }
     }
 }

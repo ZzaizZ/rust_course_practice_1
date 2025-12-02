@@ -50,9 +50,16 @@ impl TxWrapper {
         }
     }
 
-    fn apply_field(&mut self, name: &str, value: &str) {
+    fn apply_field(&mut self, name: &str, value: &str) -> Result<(), ParseError> {
+        if self.parsed_fields.contains_key(name) {
+            return Err(ParseError::InvalidFormat(format!(
+                "duplicate field {}",
+                name
+            )));
+        }
         self.parsed_fields
             .insert(name.to_string(), value.to_string());
+        Ok(())
     }
 
     fn build(&self) -> Result<Transaction, ParseError> {
@@ -63,7 +70,7 @@ impl TxWrapper {
         let amount: u64 = self.parsed_fields["AMOUNT"].parse()?;
         let timestamp: u64 = self.parsed_fields["TIMESTAMP"].parse()?;
         let status: TxStatus = self.parsed_fields["STATUS"].parse()?;
-        let description = strip_quotes(self.parsed_fields["DESCRIPTION"].clone());
+        let description = utils::parse_quoted_field(&self.parsed_fields["DESCRIPTION"]);
 
         Ok(Transaction {
             id,
@@ -78,22 +85,19 @@ impl TxWrapper {
     }
 }
 
-fn strip_quotes(mut s: String) -> String {
-    if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
-        s.remove(0);
-        s.pop();
-    }
-    s
-}
-
 fn dump_txw_as_text(txw: &TxWrapper, writer: &mut impl io::Write) -> Result<(), error::DumpError> {
-    for (k, v) in txw.parsed_fields.iter() {
-        if k == "DESCRIPTION" {
-            writeln!(writer, "{}: {}", k, utils::wrap_with_quotes(v))?;
+    REQUIRED_FIELDS.iter().try_for_each(|s| {
+        let Some(val) = txw.parsed_fields.get(*s) else {
+            return Err(DumpError::InternalError);
+        };
+        if *s == "DESCRIPTION" {
+            writeln!(writer, "{}: {}", s, utils::wrap_with_quotes(val))?;
+            Ok(())
         } else {
-            writeln!(writer, "{}: {}", k, v)?;
+            writeln!(writer, "{}: {}", s, val)?;
+            Ok(())
         }
-    }
+    })?;
     Ok(())
 }
 
@@ -152,7 +156,7 @@ fn parse_lines<I: Iterator<Item = io::Result<String>>>(
                 "invalid field format".to_string(),
             ));
         }
-        current_tx.apply_field(parts[0], parts[1]);
+        current_tx.apply_field(parts[0], parts[1])?;
     }
 
     if current_tx.is_valid() {
@@ -350,5 +354,22 @@ mod tests {
         for ex in expected {
             assert!(got.contains(ex));
         }
+    }
+
+    #[test]
+    fn test_duplicate_field() {
+        let input = r##"TX_ID: 123
+                           TX_TYPE: DEPOSIT
+                           FROM_USER_ID: 0
+                           TO_USER_ID: 9876543210987654
+                           AMOUNT: 10000
+                           TIMESTAMP: 1633036800000
+                           STATUS: SUCCESS
+                           DESCRIPTION: "Terminal deposit"
+                           DESCRIPTION: "Duplicate field""##;
+
+        let got = parse_from_text(&mut input.as_bytes());
+
+        assert!(got.is_err());
     }
 }

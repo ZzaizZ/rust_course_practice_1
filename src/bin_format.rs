@@ -97,7 +97,10 @@ impl Header {
     }
 }
 
-fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError> {
+fn read_tx(
+    reader: &mut impl io::Read,
+    full_record_size: u32,
+) -> Result<Transaction, error::ParseError> {
     let id = read_u64(reader)?;
     let r#type = read_tx_type(reader)?;
     let from_user = read_u64(reader)?;
@@ -106,6 +109,13 @@ fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError>
     let timestamp = read_u64(reader)?;
     let status = read_tx_status(reader)?;
     let desc_len = read_u32(reader)?;
+
+    if full_record_size != MIN_RECORD_SIZE + desc_len {
+        return Err(error::ParseError::InvalidFormat(
+            "mailformed record. record size mismatch".to_string(),
+        ));
+    }
+
     let description = read_string(desc_len as usize, reader)?;
 
     Ok(Transaction {
@@ -119,6 +129,9 @@ fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError>
         description,
     })
 }
+
+/// минимально возможный размер записи без описания
+const MIN_RECORD_SIZE: u32 = 46;
 
 /// Читает и парсит транзакции из бинарного формата.
 ///
@@ -162,10 +175,15 @@ pub fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, er
     loop {
         match Header::read(reader) {
             Ok(header) => {
+                if header.record_size < MIN_RECORD_SIZE {
+                    return Err(error::ParseError::InvalidFormat(
+                        "mailformed record. record size too small".to_string(),
+                    ));
+                }
                 let mut buf = vec![0u8; header.record_size as usize];
                 reader.read_exact(&mut buf)?;
                 let mut buffer_reader = Cursor::new(buf);
-                let tx = read_tx(&mut buffer_reader)?;
+                let tx = read_tx(&mut buffer_reader, header.record_size)?;
                 result.push(tx);
             }
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
@@ -369,5 +387,49 @@ mod tests {
         assert!(got.is_ok());
         assert_eq!(got.as_ref().unwrap().len(), 1);
         assert_eq!(expected, got.as_ref().unwrap()[0]);
+    }
+
+    #[test]
+    fn test_parse_mailformed_record() {
+        #[rustfmt::skip]
+        let mut data: &[u8] = &[
+            0x59, 0x50, 0x42, 0x4e,
+            0x00, 0x00, 0x00, 0x10, // запись слишком маленькая
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x04,
+            0x74, 0x65, 0x73, 0x74,
+        ];
+
+        let got = parse_from_bin(&mut data);
+
+        assert!(got.is_err());
+    }
+
+    #[test]
+    fn test_mismatch_record_size() {
+        #[rustfmt::skip]
+        let mut data: &[u8] = &[
+            0x59, 0x50, 0x42, 0x4e,
+            0x00, 0x00, 0x00, 0x32,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x05, // описание длиной 5, а не 4
+            0x74, 0x65, 0x73, 0x74,
+        ];
+
+        let got = parse_from_bin(&mut data);
+
+        assert!(got.is_err());
     }
 }
