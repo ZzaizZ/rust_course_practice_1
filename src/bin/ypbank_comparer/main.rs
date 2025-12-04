@@ -1,15 +1,26 @@
 use clap::Parser;
 use core::fmt;
-use std::{fs, io};
+use std::{fs, io, path::PathBuf};
 use ypbank_parser::{
-    error, parse_from_bin, parse_from_csv, parse_from_text,
+    error,
     types::{self, Transaction},
 };
 
-enum Type {
+#[derive(clap::ValueEnum, Clone, Debug)]
+enum KnownFileFormat {
     Bin,
     Csv,
     Text,
+}
+
+impl KnownFileFormat {
+    fn as_supported(&self) -> types::SupportedFileFormat {
+        match self {
+            KnownFileFormat::Bin => types::SupportedFileFormat::Bin,
+            KnownFileFormat::Csv => types::SupportedFileFormat::Csv,
+            KnownFileFormat::Text => types::SupportedFileFormat::Text,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -17,7 +28,18 @@ enum Error {
     Parse(String),
     Dump(String),
     Usage(String),
-    IO,
+    IO(String),
+}
+
+impl Error {
+    fn code(&self) -> i32 {
+        match self {
+            Self::Parse(_) => 1,
+            Self::Dump(_) => 2,
+            Self::Usage(_) => 3,
+            Self::IO(_) => 4,
+        }
+    }
 }
 
 impl fmt::Display for Error {
@@ -26,7 +48,7 @@ impl fmt::Display for Error {
             Self::Parse(msg) | Self::Dump(msg) | Self::Usage(msg) => {
                 write!(f, "{}", msg)
             }
-            Self::IO => write!(f, "IO error"),
+            Self::IO(msg) => write!(f, "IO error: {}", msg),
         }
     }
 }
@@ -50,28 +72,8 @@ impl From<error::DumpError> for Error {
 }
 
 impl From<io::Error> for Error {
-    fn from(_: io::Error) -> Self {
-        Error::IO
-    }
-}
-
-fn parse_format(f: &str) -> Result<Type, Error> {
-    match f {
-        "text" => Ok(Type::Text),
-        "csv" => Ok(Type::Csv),
-        "bin" => Ok(Type::Bin),
-        _ => Err(Error::Usage("invalid format".to_string())),
-    }
-}
-
-fn parse_tx(
-    reader: &mut impl io::Read,
-    input_type: Type,
-) -> Result<Vec<types::Transaction>, Error> {
-    match input_type {
-        Type::Csv => Ok(parse_from_csv(reader)?),
-        Type::Text => Ok(parse_from_text(reader)?),
-        Type::Bin => Ok(parse_from_bin(reader)?),
+    fn from(err: io::Error) -> Self {
+        Error::IO(format!("ошибка ввода-вывода: {}", err))
     }
 }
 
@@ -79,19 +81,19 @@ fn parse_tx(
 struct Args {
     /// Input file path
     #[arg(long, required = true)]
-    file1: String,
+    file1: PathBuf,
 
     /// Input file type: text/csv/bin
     #[arg(long, required = true)]
-    format1: String,
+    format1: KnownFileFormat,
 
     /// Input file path
     #[arg(long, required = true)]
-    file2: String,
+    file2: PathBuf,
 
     /// Output file type: text/csv/bin
     #[arg(long, required = true)]
-    format2: String,
+    format2: KnownFileFormat,
 }
 
 // Сравнивает набор транзакций.
@@ -112,54 +114,40 @@ fn compare<'a>(
     None
 }
 
-fn main() {
+fn run() -> Result<(), Error> {
     let args = Args::parse();
 
     let file1 = fs::File::open(&args.file1);
     let Ok(mut f1) = file1 else {
-        eprintln!(
-            "Не возможно открыть файл {}\n:{}",
-            &args.file1,
+        return Err(Error::Usage(format!(
+            "невозможно открыть файл {}: {}",
+            args.file1.display(),
             file1.unwrap_err()
-        );
-        return;
+        )));
     };
 
     let file2 = fs::File::open(&args.file2);
     let Ok(mut f2) = file2 else {
-        eprintln!(
-            "Не возможно открыть файл {}\n:{}",
-            &args.file2,
+        return Err(Error::Usage(format!(
+            "невозможно открыть файл {}: {}",
+            args.file2.display(),
             file2.unwrap_err()
-        );
-        return;
+        )));
     };
 
-    let Ok(format1) = parse_format(&args.format1) else {
-        eprintln!("Невалидный формат файла 1: {}", &args.format1,);
-        return;
-    };
-
-    let Ok(format2) = parse_format(&args.format2) else {
-        eprintln!("Невалидный формат файла 2: {}", &args.format2,);
-        return;
-    };
-
-    let transactions1 = parse_tx(&mut f1, format1);
+    let transactions1 = ypbank_parser::parse(&mut f1, args.format1.as_supported());
     let Ok(tx1_unwraped) = transactions1 else {
-        eprintln!(
-            "Ошибка при разборе транзакций файла 1:\n{:?}",
+        return Err(Error::Usage(format!(
+            "ошибка при разборе транзакций файла 1: {:?}",
             transactions1.unwrap_err()
-        );
-        return;
+        )));
     };
-    let transactions2 = parse_tx(&mut f2, format2);
+    let transactions2 = ypbank_parser::parse(&mut f2, args.format2.as_supported());
     let Ok(tx2_unwraped) = transactions2 else {
-        eprintln!(
-            "Ошибка при разборе транзакций файла 2:\n{:?}",
+        return Err(Error::Usage(format!(
+            "ошибка при разборе транзакций файла 2: {:?}",
             transactions2.unwrap_err()
-        );
-        return;
+        )));
     };
 
     let result = compare(&tx1_unwraped, &tx2_unwraped);
@@ -170,5 +158,16 @@ fn main() {
         println!("LHS:\n{:#?}\n\nRHS:\n{:#?}", r.1, r.2);
     } else {
         println!("Наборы транзакций идентичны!")
+    }
+    Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(e.code());
+        }
     }
 }

@@ -1,4 +1,4 @@
-use crate::error;
+use crate::{error, parser};
 use std::{
     io::{self, Cursor},
     mem,
@@ -36,7 +36,7 @@ fn read_string(size: usize, reader: &mut impl io::Read) -> io::Result<String> {
 }
 
 fn read_tx_type(reader: &mut impl io::Read) -> io::Result<TxType> {
-    let mut buf = vec![0u8; 1];
+    let mut buf = [0u8; 1];
     reader.read_exact(&mut buf)?;
     match buf[0] {
         0 => Ok(TxType::Deposit),
@@ -47,7 +47,7 @@ fn read_tx_type(reader: &mut impl io::Read) -> io::Result<TxType> {
 }
 
 fn read_tx_status(reader: &mut impl io::Read) -> io::Result<TxStatus> {
-    let mut buf = vec![0u8; 1];
+    let mut buf = [0u8; 1];
     reader.read_exact(&mut buf)?;
     match buf[0] {
         0 => Ok(TxStatus::Success),
@@ -97,7 +97,10 @@ impl Header {
     }
 }
 
-fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError> {
+fn read_tx(
+    reader: &mut impl io::Read,
+    full_record_size: u32,
+) -> Result<Transaction, error::ParseError> {
     let id = read_u64(reader)?;
     let r#type = read_tx_type(reader)?;
     let from_user = read_u64(reader)?;
@@ -106,6 +109,13 @@ fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError>
     let timestamp = read_u64(reader)?;
     let status = read_tx_status(reader)?;
     let desc_len = read_u32(reader)?;
+
+    if full_record_size != MIN_RECORD_SIZE + desc_len {
+        return Err(error::ParseError::InvalidFormat(
+            "mailformed record. record size mismatch".to_string(),
+        ));
+    }
+
     let description = read_string(desc_len as usize, reader)?;
 
     Ok(Transaction {
@@ -120,6 +130,9 @@ fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError>
     })
 }
 
+/// минимально возможный размер записи без описания
+const MIN_RECORD_SIZE: u32 = 46;
+
 /// Читает и парсит транзакции из бинарного формата.
 ///
 /// # Аргументы
@@ -133,39 +146,20 @@ fn read_tx(reader: &mut impl io::Read) -> Result<Transaction, error::ParseError>
 /// Возвращает [`ParseError`], если:
 /// * Формат данных некорректен.
 /// * Возникла ошибка ввода-вывода при чтении из `reader`.
-///
-/// # Пример
-///
-/// Чтение из массива байт:
-///
-/// ```rust
-/// use ypbank_parser::{parse_from_bin, types::Transaction};
-///
-/// let mut data: &[u8] = &[
-///            0x59, 0x50, 0x42, 0x4e,
-///            0x00, 0x00, 0x00, 0x32,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
-///            0x00,
-///            0x00, 0x00, 0x00, 0x04,
-///            0x74, 0x65, 0x73, 0x74,
-///        ];
-///
-/// let txs = parse_from_bin(&mut data).expect("Ошибка парсинга");
-/// ```
-pub fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
     let mut result = Vec::<Transaction>::new();
     loop {
         match Header::read(reader) {
             Ok(header) => {
+                if header.record_size < MIN_RECORD_SIZE {
+                    return Err(error::ParseError::InvalidFormat(
+                        "mailformed record. record size too small".to_string(),
+                    ));
+                }
                 let mut buf = vec![0u8; header.record_size as usize];
                 reader.read_exact(&mut buf)?;
                 let mut buffer_reader = Cursor::new(buf);
-                let tx = read_tx(&mut buffer_reader)?;
+                let tx = read_tx(&mut buffer_reader, header.record_size)?;
                 result.push(tx);
             }
             Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
@@ -187,27 +181,7 @@ pub fn parse_from_bin(reader: &mut impl io::Read) -> Result<Vec<Transaction>, er
 ///
 /// Возвращает [`DumpError`], если:
 /// * Произошла ошибка ввода-вывода (IO error) при записи во `writer`.
-///
-/// # Пример
-///
-/// Запись в буфер в памяти:
-///
-/// ```rust
-/// use ypbank_parser::{dump_as_bin, types::{Transaction, TxStatus, TxType}, };
-///
-/// let txs = vec![Transaction{id: 1, r#type: TxType::Deposit,
-///                            from_user: 1001, to_user: 1001,
-///                            amount: 1001, timestamp: 1633036800000,
-///                            status: TxStatus::Success,
-///                            description: "Description".to_string()}];
-/// let mut buffer: Vec<u8> = Vec::new();
-///
-/// dump_as_bin(&mut buffer, &txs).expect("Ошибка записи");
-///
-/// let magic_number: &[u8] = &[0x59u8, 0x50u8, 0x42u8, 0x4eu8];
-/// assert!(buffer.starts_with(magic_number));
-/// ```
-pub fn dump_as_bin<W: io::Write>(
+fn dump_as_bin<W: io::Write>(
     writer: &mut W,
     transactions: &[Transaction],
 ) -> Result<(), error::DumpError> {
@@ -262,6 +236,21 @@ fn dump_tx(tx: &Transaction) -> Vec<u8> {
     res.extend_from_slice(tx.description.as_bytes());
 
     res
+}
+
+pub(crate) struct BinParser;
+
+impl parser::Parser for BinParser {
+    fn parse(reader: &mut impl io::Read) -> Result<Vec<Transaction>, error::ParseError> {
+        parse_from_bin(reader)
+    }
+
+    fn dump(
+        writer: &mut impl io::Write,
+        transactions: &[Transaction],
+    ) -> Result<(), error::DumpError> {
+        dump_as_bin(writer, transactions)
+    }
 }
 
 #[cfg(test)]
@@ -369,5 +358,49 @@ mod tests {
         assert!(got.is_ok());
         assert_eq!(got.as_ref().unwrap().len(), 1);
         assert_eq!(expected, got.as_ref().unwrap()[0]);
+    }
+
+    #[test]
+    fn test_parse_mailformed_record() {
+        #[rustfmt::skip]
+        let mut data: &[u8] = &[
+            0x59, 0x50, 0x42, 0x4e,
+            0x00, 0x00, 0x00, 0x10, // запись слишком маленькая
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x04,
+            0x74, 0x65, 0x73, 0x74,
+        ];
+
+        let got = parse_from_bin(&mut data);
+
+        assert!(got.is_err());
+    }
+
+    #[test]
+    fn test_mismatch_record_size() {
+        #[rustfmt::skip]
+        let mut data: &[u8] = &[
+            0x59, 0x50, 0x42, 0x4e,
+            0x00, 0x00, 0x00, 0x32,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe9,
+            0x00,
+            0x00, 0x00, 0x00, 0x05, // описание длиной 5, а не 4
+            0x74, 0x65, 0x73, 0x74,
+        ];
+
+        let got = parse_from_bin(&mut data);
+
+        assert!(got.is_err());
     }
 }
